@@ -1,0 +1,9 @@
+<li>
+    <a 
+        class="dropdown-item oc-icon-refresh"
+        onclick="$(this).data('request-data', { checked: $('#<?= $listWidgetId ?> .control-list').listWidget('getChecked') })"
+        data-request="<?= $syncConditionsHandler ?>"
+        data-list-checked-request
+        data-stripe-load-indicato
+    >Sync Conditions</a>
+</li>
