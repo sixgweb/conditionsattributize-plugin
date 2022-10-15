@@ -8,7 +8,7 @@ use Sixgweb\Attributize\Models\Field;
 use Sixgweb\Conditions\Behaviors\Conditioner;
 use Sixgweb\Conditions\Behaviors\Conditionable;
 use Sixgweb\Attributize\FormWidgets\Attributize;
-use Sixgweb\Conditions\Classes\ConditionsManager;
+use Sixgweb\Conditions\Classes\ConditionersManager;
 use Sixgweb\Attributize\Behaviors\FieldsController;
 use Sixgweb\ConditionsAttributize\Classes\ConditionableEventHandler;
 
@@ -167,15 +167,15 @@ class Plugin extends PluginBase
     protected function extendPreview()
     {
         Event::listen('sixgweb.attributize.createPreview', function ($query, $filterWidget) {
-            $conditionsManager = ConditionsManager::instance();
+            $conditionersManager = ConditionersManager::instance();
             foreach ($filterWidget->getScopes() as $scope) {
                 if ($scope->modelScope && $scope->modelScope == 'meetsConditions') {
                     $name = $scope->scopeName;
                     $class = str_replace('_', '\\', $name);
                     if ($scope->value) {
-                        $conditionsManager->addConditioner([$class => $scope->value]);
+                        $conditionersManager->addConditioner([$class => $scope->value]);
                     } else {
-                        $conditionsManager->removeConditioner($class);
+                        $conditionersManager->removeConditioner($class);
                     }
                 }
             }
