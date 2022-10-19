@@ -79,7 +79,7 @@ class Plugin extends PluginBase
                 !$controller->isClassExtendedWith(\Backend\Behaviors\FormController::class) ||
                 $controller->isClassExtendedWith(FieldsController::class) ||
                 $controller->methodExists('createFieldsFormWidget') ||
-                !$widget->model->isClassExtendedWith(Conditioner::class) ||
+                !$widget->model->conditionerFields ||
                 $widget->model instanceof Field ||
                 !$widget->model->exists ||
                 (post('nested_depth', 0) > 0)
@@ -87,7 +87,7 @@ class Plugin extends PluginBase
                 return;
             }
 
-            if (!$fields = $widget->model->getConditionerFields()) {
+            if (!$fields = $widget->model->conditionerFields) {
                 return;
             }
 
