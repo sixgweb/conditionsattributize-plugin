@@ -1,7 +1,7 @@
 {
     "name": "sixgweb/conditionsattributize-plugin",
     "type": "october-plugin",
-    "description": "No description provided yet...",
+    "description": "Sixgweb Attributize Conditions Integration",
     "require": {
         "composer/installers": "~1.0"
     }
