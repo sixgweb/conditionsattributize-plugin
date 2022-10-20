@@ -2,6 +2,7 @@
     "name": "sixgweb/conditionsattributize-plugin",
     "type": "october-plugin",
     "description": "Sixgweb Attributize Conditions Integration",
+    "license": "MIT",
     "require": {
         "composer/installers": "~1.0"
     }
