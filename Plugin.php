@@ -2,10 +2,11 @@
 
 namespace Sixgweb\ConditionsAttributize;
 
+use App;
 use Event;
 use System\Classes\PluginBase;
 use Sixgweb\Attributize\Models\Field;
-use Sixgweb\Conditions\Behaviors\Conditioner;
+use Sixgweb\Attributize\Behaviors\Fieldable;
 use Sixgweb\Conditions\Behaviors\Conditionable;
 use Sixgweb\Attributize\FormWidgets\Attributize;
 use Sixgweb\Conditions\Classes\ConditionersManager;
@@ -57,6 +58,7 @@ class Plugin extends PluginBase
         Event::subscribe(ConditionableEventHandler::class);
         $this->extendFormWidget();
         $this->addConditionsToCreatedFields();
+        $this->addDependsOnToAttributizeFields();
         $this->extendPreview();
         $this->addSyncToolbarButton();
     }
@@ -69,7 +71,7 @@ class Plugin extends PluginBase
          * New field must be created outside a FieldsController controller,
          * the controller's model (FormController) must exist and is a Conditioner.
          * 
-         * Special case for post('nested_depth') which will be greater than 0
+         * Special case for post('editor_level') which will be greater than 0
          * if we're in a repeater.  Repeater fields are morphed to the repeater
          * so no need for default conditions on morphed fields
          */
@@ -112,6 +114,51 @@ class Plugin extends PluginBase
             Field::extend(function ($model) use ($defaultConditions) {
                 $model->conditions = $defaultConditions;
             });
+        });
+    }
+
+    /**
+     * Adds/updates dependsOn attribute for attributizefields
+     * field type.  If the form has relation fields defined,
+     * they are automatically added as dependencies, allowing
+     * other plugins to add the conditioner(s)
+     *
+     * @return void
+     */
+    protected function addDependsOnToAttributizeFields(): void
+    {
+        Event::listen('backend.form.extendFields', function ($widget) {
+
+            if (
+                !App::runningInBackend() ||
+                !$widget->model->isClassExtendedWith(Fieldable::class)
+            ) {
+                return;
+            }
+
+            $attributizeFields = null;
+            $relations = [];
+            foreach ($widget->fields as $code => $field) {
+                if (isset($field['type'])) {
+                    if ($field['type'] == 'attributizefields') {
+                        $attributizeFields = $code;
+                    }
+
+                    if ($field['type'] == 'relation') {
+                        $relations[] = $code;
+                    }
+                }
+            }
+
+            if (!$attributizeFields || empty($relations)) {
+                return;
+            }
+
+            //Get the field and update the dependsOn attribute
+            $field = $widget->getField($attributizeFields);
+            $depends = $field->dependsOn ?? [];
+            $depends = $depends + $relations;
+            $field->dependsOn($depends);
         });
     }
 
