@@ -3,3 +3,5 @@
   - add_conditions_to_fields_table.php
 1.0.2:
   - Update composer dependencies
+1.0.3:
+  - Fix undefined method isClassExtendedWith on theme class

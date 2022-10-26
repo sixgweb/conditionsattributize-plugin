@@ -131,6 +131,7 @@ class Plugin extends PluginBase
 
             if (
                 !App::runningInBackend() ||
+                !method_exists($widget->model, 'extendableConstruct') ||
                 !$widget->model->isClassExtendedWith(Fieldable::class)
             ) {
                 return;
