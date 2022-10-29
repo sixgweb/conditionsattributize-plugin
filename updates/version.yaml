@@ -5,3 +5,5 @@
   - Update composer dependencies
 1.0.3:
   - Fix undefined method isClassExtendedWith on theme class
+1.0.4:
+  - Removed unused event filter
