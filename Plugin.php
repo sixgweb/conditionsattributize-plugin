@@ -182,29 +182,6 @@ class Plugin extends PluginBase
     }
 
     /**
-     * Extend the filter widget, hiding the scope for the controller's model
-     * if the controller does not use the FieldsController behavior.  This condition
-     * will be auto applied in extendFormWidget above and should not be user selectable 
-     *
-     * @return void
-     */
-    protected function extendFilterWidget()
-    {
-        Event::listen('backend.filter.extendScopes', function ($widget) {
-            if (!$widget->model->isClassExtendedWith(Conditionable::class)) {
-                return;
-            }
-
-            if (!$widget->getController()->isClassExtendedWith(FieldsController::class)) {
-                if ($model = $widget->getController()->asExtension('FormController')->formGetModel()) {
-                    $scope = str_replace('\\', '_', get_class($model));
-                    $widget->removeScope($scope);
-                }
-            }
-        });
-    }
-
-    /**
      * Since the createPreview method is using FieldsHelper to generate the preview fields in attributize
      * form widget, the filterWidget never calls the model.filter.filterScopes event, listened for in 
      * AbstractConditioanbleEventHandler.  This workaround listens to the createPreview event 
