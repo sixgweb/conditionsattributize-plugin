@@ -4,10 +4,10 @@ namespace Sixgweb\ConditionsAttributize;
 
 use App;
 use Event;
+use Flash;
 use System\Classes\PluginBase;
 use Sixgweb\Attributize\Models\Field;
 use Sixgweb\Attributize\Behaviors\Fieldable;
-use Sixgweb\Conditions\Behaviors\Conditionable;
 use Sixgweb\Attributize\FormWidgets\Attributize;
 use Sixgweb\Conditions\Classes\ConditionersManager;
 use Sixgweb\Attributize\Behaviors\FieldsController;
@@ -56,7 +56,7 @@ class Plugin extends PluginBase
     public function boot()
     {
         Event::subscribe(ConditionableEventHandler::class);
-        $this->extendFormWidget();
+        $this->removeMeetsConditionsGlobalScope();
         $this->addConditionsToCreatedFields();
         $this->addDependsOnToAttributizeFields();
         $this->extendPreview();
@@ -77,6 +77,11 @@ class Plugin extends PluginBase
          */
         Event::listen('backend.form.extendFields', function ($widget) {
             $controller = $widget->getController();
+            if ($handler = $controller->getAjaxHandler()) {
+                $parts = explode('::', $handler);
+                $handler = end($parts);
+            }
+
             if (
                 !$controller->isClassExtendedWith(\Backend\Behaviors\FormController::class) ||
                 $controller->isClassExtendedWith(FieldsController::class) ||
@@ -84,7 +89,8 @@ class Plugin extends PluginBase
                 !$widget->model->conditionerFields ||
                 $widget->model instanceof Field ||
                 !$widget->model->exists ||
-                (post('nested_depth', 0) > 0)
+                (post('nested_depth', 0) > 0) ||
+                $handler != 'onLoadFieldForm'
             ) {
                 return;
             }
@@ -108,7 +114,12 @@ class Plugin extends PluginBase
                     '_logic' => 'inclusive',
                     'id' => $value,
                 ];
+
                 $defaultConditions[] = $condition;
+            }
+
+            if (!empty($defaultConditions)) {
+                Flash::info($field['label'] . ' Condition Automatically Added');
             }
 
             Field::extend(function ($model) use ($defaultConditions) {
@@ -157,7 +168,9 @@ class Plugin extends PluginBase
 
             //Get the field and update the dependsOn attribute
             $field = $widget->getField($attributizeFields);
-            $depends = $field->dependsOn ?? [];
+            $depends = isset($field->dependsOn) && is_array($field->dependsOn)
+                ? $field->dependsOn
+                : [];
             $depends = $depends + $relations;
             $field->dependsOn($depends);
         });
@@ -170,7 +183,7 @@ class Plugin extends PluginBase
      *
      * @return void
      */
-    protected function extendFormWidget()
+    protected function removeMeetsConditionsGlobalScope()
     {
         Attributize::extend(function ($widget) {
             if (\Backend\Classes\BackendController::$action == 'fields') {
