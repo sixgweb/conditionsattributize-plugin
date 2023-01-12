@@ -7,4 +7,7 @@
   - Fix undefined method isClassExtendedWith on theme class
 1.0.4:
   - Removed unused event filter
-1.0.5: Auto added conditions flash message.  Fix dependsOn not array.
+1.0.5: 
+  - Auto added conditions flash message.  Fix dependsOn not array.
+1.0.6: 
+  - Add fields import/export logic

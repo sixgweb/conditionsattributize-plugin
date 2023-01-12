@@ -6,11 +6,13 @@ use App;
 use Event;
 use Flash;
 use System\Classes\PluginBase;
+use Backend\Classes\BackendController;
 use Sixgweb\Attributize\Models\Field;
 use Sixgweb\Attributize\Behaviors\Fieldable;
 use Sixgweb\Attributize\FormWidgets\Attributize;
 use Sixgweb\Conditions\Classes\ConditionersManager;
 use Sixgweb\Attributize\Behaviors\FieldsController;
+use Sixgweb\Attributize\Behaviors\FieldsImportExportController;
 use Sixgweb\ConditionsAttributize\Classes\ConditionableEventHandler;
 
 /**
@@ -61,6 +63,7 @@ class Plugin extends PluginBase
         $this->addDependsOnToAttributizeFields();
         $this->extendPreview();
         $this->addSyncToolbarButton();
+        $this->extendImportExport();
     }
 
     protected function addConditionsToCreatedFields()
@@ -240,6 +243,54 @@ class Plugin extends PluginBase
                 }
                 return $widget->listWidget->onRefresh();
             });
+        });
+    }
+
+    protected function extendImportExport()
+    {
+        FieldsImportExportController::extend(function ($controller) {
+
+            if (BackendController::$action == 'import') {
+                Event::listen('sixgweb.attributize.getFieldableFields', function ($query) {
+                    $conditioners = ConditionersManager::instance()->getConditioners();
+                    $conditioners = array_filter($conditioners);
+                    $withoutGlobalScope = true;
+
+                    foreach ($conditioners as $class => $values) {
+                        foreach ($values as $value) {
+                            if ($value) {
+                                $withoutGlobalScope = false;
+                                break;
+                            }
+                        }
+                    }
+
+                    if ($withoutGlobalScope) {
+                        $query->withoutGlobalScopes();
+                    }
+                });
+            }
+
+            if (BackendController::$action == 'export') {
+                Event::listen('sixgweb.attributize.getFieldableFields', function ($query) {
+                    $conditioners = ConditionersManager::instance()->getConditioners();
+                    $conditioners = array_filter($conditioners);
+                    $withoutGlobalScope = true;
+
+                    foreach ($conditioners as $class => $values) {
+                        foreach ($values as $value) {
+                            if ($value) {
+                                $withoutGlobalScope = false;
+                                break;
+                            }
+                        }
+                    }
+
+                    if ($withoutGlobalScope) {
+                        $query->withoutGlobalScopes();
+                    }
+                });
+            }
         });
     }
 }
