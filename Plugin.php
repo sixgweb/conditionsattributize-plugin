@@ -132,50 +132,45 @@ class Plugin extends PluginBase
     }
 
     /**
-     * Adds/updates dependsOn attribute for attributizefields
-     * field type.  If the form has relation fields defined,
+     * Adds/updates dependsOn attribute for attributize fields
+     * If the form has relation fields defined,
      * they are automatically added as dependencies, allowing
-     * other plugins to add the conditioner(s)
+     * other plugins to add the conditioner(s).
+     * 
+     * ConditionedFields are retrieved and any fields not matching
+     * conditioned fields are hidden, allowing dependsOn to still work.
      *
      * @return void
      */
     protected function addDependsOnToAttributizeFields(): void
     {
-        Event::listen('backend.form.extendFields', function ($widget) {
-
-            if (
-                !App::runningInBackend() ||
-                !method_exists($widget->model, 'extendableConstruct') ||
-                !$widget->model->isClassExtendedWith(Fieldable::class)
-            ) {
-                return;
-            }
-
-            $attributizeFields = null;
+        Event::listen('sixgweb.attributize.backend.form.extendAllFields', function ($widget, $allFields) {
             $relations = [];
-            foreach ($widget->fields as $code => $field) {
-                if (isset($field['type'])) {
-                    if ($field['type'] == 'attributizefields') {
-                        $attributizeFields = $code;
-                    }
-
-                    if ($field['type'] == 'relation') {
-                        $relations[] = $code;
-                    }
+            foreach ($widget->getFields() as $code => $field) {
+                if (isset($field->type) && $field->type == 'relation') {
+                    $relations[] = $code;
                 }
             }
 
-            if (!$attributizeFields || empty($relations)) {
+            if (empty($relations)) {
                 return;
             }
 
-            //Get the field and update the dependsOn attribute
-            $field = $widget->getField($attributizeFields);
-            $depends = isset($field->dependsOn) && is_array($field->dependsOn)
-                ? $field->dependsOn
-                : [];
-            $depends = $depends + $relations;
-            $field->dependsOn($depends);
+            $allFields->each(function ($field) use ($widget, $relations) {
+                $code = $field->type == 'fileupload'
+                    ? $widget->model->fieldable . '_' . $field->code
+                    : $widget->model->fieldable . '[' . $field->code . ']';
+                $formField = $widget->getField($code);
+
+                $depends = [];
+                if (isset($formField->config['dependsOn']) && $formField->config['dependsOn']) {
+                    $depends = is_array($formField->config['dependsOn'])
+                        ? $formField->config['dependsOn']
+                        : [$formField->config['dependsOn']];
+                }
+                $depends = array_merge($depends, $relations);
+                $formField->dependsOn($depends);
+            });
         });
     }
 

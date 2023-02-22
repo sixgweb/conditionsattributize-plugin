@@ -11,3 +11,5 @@
   - Auto added conditions flash message.  Fix dependsOn not array.
 1.0.6: 
   - Add fields import/export logic
+1.0.7:
+  - Use sixgweb.attributize.backend.form.extendAllFields event to update dependsOn 
