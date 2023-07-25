@@ -13,3 +13,5 @@
   - Add fields import/export logic
 1.0.7:
   - Use sixgweb.attributize.backend.form.extendAllFields event to update dependsOn 
+1.0.8:
+  - Remove automatic conditions flash message, since Attributize now has dirty field/tab indicator

@@ -121,9 +121,9 @@ class Plugin extends PluginBase
                 $defaultConditions[] = $condition;
             }
 
-            if (!empty($defaultConditions)) {
+            /*if (!empty($defaultConditions)) {
                 Flash::info($field['label'] . ' Condition Automatically Added');
-            }
+            }*/
 
             Field::extend(function ($model) use ($defaultConditions) {
                 $model->conditions = $defaultConditions;
