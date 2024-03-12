@@ -1,0 +1,21 @@
+# ===================================
+#  List Column Definitions
+# ===================================
+
+columns:
+    label: 
+        label: Label
+        searchable: true
+    value:
+        label: Value
+        searchable: true
+    field_name:
+        label: Field
+        relation: field
+        valueFrom: name
+        searchable: true
+    fieldable_name:
+      label: Fieldable
+      relation: field
+      valueFrom: fieldable_type
+      searchable: true

@@ -4,22 +4,25 @@ namespace Sixgweb\ConditionsAttributize;
 
 use App;
 use Event;
-use Flash;
 use System\Classes\PluginBase;
 use Backend\Classes\BackendController;
 use Sixgweb\Attributize\Models\Field;
-use Sixgweb\Attributize\Behaviors\Fieldable;
+use Sixgweb\Attributize\Models\FieldValue;
 use Sixgweb\Attributize\FormWidgets\Attributize;
 use Sixgweb\Conditions\Classes\ConditionersManager;
 use Sixgweb\Attributize\Behaviors\FieldsController;
 use Sixgweb\Attributize\Behaviors\FieldsImportExportController;
+use Sixgweb\Attributize\Components\Fields;
 use Sixgweb\ConditionsAttributize\Classes\ConditionableEventHandler;
+use Sixgweb\ConditionsAttributize\Classes\FieldValueConditionerEventHandler;
+use Sixgweb\ConditionsAttributize\Classes\FieldValueConditionableEventHandler;
 
 /**
  * Plugin Information File
  */
 class Plugin extends PluginBase
 {
+
     protected $exportWidget;
 
     public $require = [
@@ -58,12 +61,16 @@ class Plugin extends PluginBase
     public function boot()
     {
         Event::subscribe(ConditionableEventHandler::class);
+        Event::subscribe(FieldValueConditionableEventHandler::class);
+        Event::subscribe(FieldValueConditionerEventHandler::class);
         $this->removeMeetsConditionsGlobalScope();
         $this->addConditionsToCreatedFields();
         $this->addDependsOnToAttributizeFields();
         $this->extendPreview();
+        $this->extendFieldValueModel();
         $this->addSyncToolbarButton();
         $this->extendImportExport();
+        $this->extendFieldsComponent();
     }
 
     protected function addConditionsToCreatedFields()
@@ -158,10 +165,15 @@ class Plugin extends PluginBase
 
             $allFields->each(function ($field) use ($widget, $relations) {
                 $code = $field->type == 'fileupload'
-                    ? $widget->model->fieldable . '_' . $field->code
-                    : $widget->model->fieldable . '[' . $field->code . ']';
+                    ? $widget->model->fieldableGetColumn() . '_' . $field->code
+                    : $widget->model->fieldableGetColumn() . '[' . $field->code . ']';
                 $formField = $widget->getField($code);
-
+                if (!$formField) {
+                    $formField = $widget->getField($field->code);
+                }
+                if (!$formField) {
+                    return;
+                }
                 $depends = [];
                 if (isset($formField->config['dependsOn']) && $formField->config['dependsOn']) {
                     $depends = is_array($formField->config['dependsOn'])
@@ -186,8 +198,32 @@ class Plugin extends PluginBase
         Attributize::extend(function ($widget) {
             if (\Backend\Classes\BackendController::$action == 'fields') {
                 Event::listen('backend.list.extendQuery', function ($listWidget, $query) {
-                    $query->withoutGlobalScopes(['meetsConditions']);
+                    $query->withoutGlobalScope('meetsConditions');
                 });
+                Event::listen('sixgweb.attributize.getFieldModel', function ($query) {
+                    $query->withoutGlobalScope('meetsConditions');
+                });
+
+                /**
+                 * Would like use withoutGlobalScope but don't have access to the query
+                 * in the ListStructure widget onReorder.  This overrides the meetsConditions scope
+                 * with an empty callback.  Gross but works.
+                 */
+                Field::extend(function ($model) {
+                    Event::listen('backend.list.beforeReorderStructure', function ($item) use ($model) {
+                        $model->addGlobalScope('meetsConditions', function ($builder) {
+                            return function () {
+                            };
+                        });
+                    });
+                });
+            } else {
+                $fieldValues = FieldValue::select('id')
+                    ->whereHas('field', function ($query) use ($widget) {
+                        $query->where('fieldable_type', $widget->getConfig('fieldableType'));
+                    })->get()->pluck('id')->toArray();
+                $conditionsManager = ConditionersManager::instance();
+                $conditionsManager->addConditioner([FieldValue::class => $fieldValues]);
             }
         });
     }
@@ -195,7 +231,7 @@ class Plugin extends PluginBase
     /**
      * Since the createPreview method is using FieldsHelper to generate the preview fields in attributize
      * form widget, the filterWidget never calls the model.filter.filterScopes event, listened for in 
-     * AbstractConditioanbleEventHandler.  This workaround listens to the createPreview event 
+     * AbstractConditionableEventHandler.  This workaround listens to the createPreview event 
      * and performs the same function
      *
      * @return void
@@ -203,6 +239,14 @@ class Plugin extends PluginBase
     protected function extendPreview()
     {
         Event::listen('sixgweb.attributize.createPreview', function ($query, $filterWidget) {
+            /**
+             * Remove the meets conditions global scope when in the Fields action.  Otherwise,
+             * some fields that have conditions will not be visible in the interface (e.g. Forms->Entry Fields)
+             **/
+            if ($filterWidget->getController()->getAction() == 'fields') {
+                $query->withoutGlobalScope('meetsConditions');
+            }
+
             $conditionersManager = ConditionersManager::instance();
             foreach ($filterWidget->getScopes() as $scope) {
                 if ($scope->modelScope && $scope->modelScope == 'meetsConditions') {
@@ -215,6 +259,43 @@ class Plugin extends PluginBase
                     }
                 }
             }
+        });
+    }
+
+    /**
+     * Adds dynamic method to FieldValue model to scope by fieldable type matching
+     * the Attributize widget's fieldableType
+     *
+     * @return void
+     */
+    protected function extendFieldValueModel()
+    {
+        Attributize::extend(function ($widget) {
+            FieldValue::extend(function ($model) use ($widget) {
+                //Don't add dynamic method when Attributize is in a repeater editor
+                if ($widget->isRepeater) {
+                    return;
+                }
+
+                $model->addDynamicMethod('scopeMatchFieldableType', function ($query) use ($widget) {
+                    if ($widget->getFieldModel()->exists) {
+                        $query->where('field_id', '!=', $widget->getFieldModel()->id);
+                    }
+                    $query->where(function ($query) use ($widget) {
+                        $query->whereHas('field', function ($query) use ($widget) {
+
+                            $query->where('fieldable_type', $widget->fieldableType);
+                        });
+
+                        //Handles repeaters 1 level deep.  TODO: Loop posted nested_depth
+                        $query->orWhereHas('field', function ($query) use ($widget) {
+                            $query->whereHas('fieldable', function ($query) use ($widget) {
+                                $query->where('fieldable_type', $widget->fieldableType);
+                            });
+                        });
+                    });
+                });
+            });
         });
     }
 
@@ -246,7 +327,7 @@ class Plugin extends PluginBase
         FieldsImportExportController::extend(function ($controller) {
 
             if (BackendController::$action == 'import') {
-                Event::listen('sixgweb.attributize.getFieldableFields', function ($query) {
+                Event::listen('sixgweb.attributize.fieldable.getFields', function ($query) {
                     $conditioners = ConditionersManager::instance()->getConditioners();
                     $conditioners = array_filter($conditioners);
                     $withoutGlobalScope = true;
@@ -267,7 +348,7 @@ class Plugin extends PluginBase
             }
 
             if (BackendController::$action == 'export') {
-                Event::listen('sixgweb.attributize.getFieldableFields', function ($query) {
+                Event::listen('sixgweb.attributize.fieldable.getFields', function ($query) {
                     $conditioners = ConditionersManager::instance()->getConditioners();
                     $conditioners = array_filter($conditioners);
                     $withoutGlobalScope = true;
@@ -286,6 +367,31 @@ class Plugin extends PluginBase
                     }
                 });
             }
+        });
+    }
+
+    /**
+     * Extend fields component for frontend
+     *
+     * @return void
+     */
+    protected function extendFieldsComponent(): void
+    {
+        /**
+         * Trigger form refresh when any fieldvalues are changed on the component form.  This allows
+         * conditions to be applied and the form to add/remove fields/field values that utilize these
+         * potential conditions.
+         */
+        Fields::extend(function ($component) {
+            Event::listen('sixgweb.attributize.fieldable.afterGetFields', function (&$fields) use ($component) {
+                foreach ($fields as $field) {
+                    if ($field->fieldvalues->count()) {
+                        $config = $field->config;
+                        $config['changeHandler'] = $component->alias . 'Form::onRefresh';
+                        $field->config = $config;
+                    }
+                }
+            });
         });
     }
 }

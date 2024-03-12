@@ -15,3 +15,7 @@
   - Use sixgweb.attributize.backend.form.extendAllFields event to update dependsOn 
 1.0.8:
   - Remove automatic conditions flash message, since Attributize now has dirty field/tab indicator
+1.1.0:
+  - Add conditions to field_values table
+  - FieldValue is now conditionable and a conditioner
+  - add_conditions_to_field_values_table.php
