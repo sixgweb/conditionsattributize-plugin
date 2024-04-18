@@ -19,3 +19,6 @@
   - Add conditions to field_values table
   - FieldValue is now conditionable and a conditioner
   - add_conditions_to_field_values_table.php
+1.1.1:
+  - Refresh form when changing fieldvalue that is a conditioner
+  - Force condition logic for fieldvalue conditioners

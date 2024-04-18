@@ -3,6 +3,7 @@
 namespace Sixgweb\ConditionsAttributize\Classes;
 
 use Event;
+use Sixgweb\Attributize\Models\Field;
 use Sixgweb\Attributize\Models\FieldValue;
 use Sixgweb\Conditions\Classes\AbstractConditionerEventHandler;
 use Sixgweb\Conditions\Classes\ConditionersManager;
@@ -20,8 +21,8 @@ class FieldValueConditionerEventHandler extends AbstractConditionerEventHandler
 
     protected function getControllerClass(): ?string
     {
-        //All backend controllers
-        return \Sixgweb\Attributize\FormWidgets\Attributize::class;
+        //return \Sixgweb\Attributize\FormWidgets\Attributize::class;
+        return \Sixgweb\Attributize\Behaviors\Fieldable::class;
     }
 
     protected function getFieldConfig(): array
@@ -62,101 +63,66 @@ class FieldValueConditionerEventHandler extends AbstractConditionerEventHandler
     {
         return function () {
 
+            /**
+             * Before we get the fieldable fields, we need to inject the field values into the conditioners manager.
+             * This will allow us to filter the fieldable fields based on the field values.
+             */
             Event::listen('sixgweb.attributize.fieldable.getFields', function (&$fields, $model, $options) {
+
+
+                //Initialize the values from the model
                 $modelValues = $model->{$model->fieldableGetColumn()} ?? [];
+
+                //Override the values with post data
                 if ($post = post()) {
                     $postValues = $this->extractFieldValuesFromPostData($post);
                     $modelValues = $postValues ? $postValues : $modelValues;
                 }
 
+                //Apply the conditioners, if we have field values
                 if (!empty($modelValues)) {
-                    $fieldValues = FieldValue::select('id');
-                    foreach ($modelValues as $key => $value) {
 
-                        //TODO: work on repeaters
-                        if (is_array($value) && is_array($value[0])) {
-                            continue;
-                        }
-
-                        $fieldValues->orWhere(function ($query) use ($model, $key, $value) {
-                            if (is_array($value)) {
-                                $query->whereIn('value', $value);
-                            } else {
-                                $query->where('value', $value);
-                            }
-                            $query->whereHas('field', function ($query) use ($model, $key) {
-                                $query->where('code', $key);
-                                $query->where('fieldable_type', get_class($model));
-                            });
-                        });
-                    }
-                    $fieldValues = $fieldValues->get();
-                    $ids = $fieldValues->pluck('id')->toArray();
+                    $query = FieldValue::select('id');
+                    $this->addFieldValuesToModelQuery($model, $modelValues, $query);
+                    $ids = $query->get()->pluck('id')->toArray();
                     ConditionersManager::instance()->addConditioner([FieldValue::class => $ids]);
                 } else {
                     ConditionersManager::instance()->addConditioner([FieldValue::class => '']);
                 }
             });
-
-            Event::listen('sixgweb.attributize.fieldable.afterGetFieldss', function (&$fields, $model, $options) {
-                if (isset($this->classes[get_class($model)])) {
-                    return;
-                }
-
-                if ($model->exists) {
-                    $this->fieldValues = empty($this->fieldValues) ? $model->{$model->fieldableGetColumn()} : $this->fieldValues;
-                }
-                $this->classes[get_class($model)] = true;
-                $fields = $model->fieldableGetFields($options);
-            });
-
-            $this->getModelClass()::extend(function ($model) {
-                $model->bindEvent('model.afterFetchs', function () use ($model) {
-                    if ($post = post()) {
-                        $fieldValues = $this->extractFieldValuesFromPostData($post);
-                        if ($fieldValues) {
-                            $this->fieldValues = $fieldValues;
-                        }
-                    }
-
-                    if (empty($this->fieldValues)) {
-                        $conditionersManager = ConditionersManager::instance();
-                        $conditionersManager->addConditioner([$this->getModelClass() => '']);
-                        return;
-                    }
-
-                    if (!$model->field) {
-                        return;
-                    }
-
-                    if (isset($this->fieldValues[$model->field->code])) {
-                        $fieldValue = $this->fieldValues[$model->field->code];
-                        $match = is_array($fieldValue) ? in_array($model->value, $fieldValue) : $fieldValue == $model->value;
-                        if ($match) {
-                            $conditionersManager = ConditionersManager::instance();
-                            $conditionersManager->addConditioner($model);
-                        }
-                    }
-
-                    /**
-                     * Fieldable will only be set for repeater fields.  Other fields have no fieldable_id value.
-                     */
-                    if ($model->field->fieldable) {
-                        $fieldable = $model->field->fieldable;
-                        if (isset($fieldValues[$fieldable->code]) && is_array($fieldValues[$fieldable->code])) {
-                            foreach ($fieldValues[$fieldable->code] as $array) {
-                                if (isset($array[$model->field->code]) && $array[$model->field->code]) {
-                                    if ($array[$model->field->code] == $model->value) {
-                                        $conditionersManager = ConditionersManager::instance();
-                                        $conditionersManager->addConditioner($model);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                });
-            });
         };
+    }
+
+    protected function addFieldValuesToModelQuery($model, $modelValues, $query)
+    {
+        foreach ($modelValues as $key => $value) {
+
+            if (substr($key, 0, 1) == '_') {
+                continue;
+            }
+
+            //Handle repeater values
+            if (is_array($value) && (isset($value[0]) && is_array($value[0]))) {
+                $fieldModel = new Field;
+                foreach ($value as $repeaterValue) {
+                    $this->addFieldValuesToModelQuery($fieldModel, $repeaterValue, $query);
+                }
+            } else {
+                $query->orWhere(function ($query) use ($model, $key, $value) {
+                    if (is_array($value)) {
+                        $query->whereIn('value', $value);
+                    } else {
+                        $query->where('value', $value);
+                    }
+                    $query->whereHas('field', function ($query) use ($model, $key) {
+                        //This will slow the query down and we don't need it applied here.
+                        $query->withoutGlobalScope('meetsConditions');
+                        $query->where('code', $key);
+                        $query->where('fieldable_type', get_class($model));
+                    });
+                });
+            }
+        }
     }
 
     protected function extractFieldValuesFromPostData($data)
@@ -166,8 +132,32 @@ class FieldValueConditionerEventHandler extends AbstractConditionerEventHandler
                 return $value;
             }
             if (is_array($value)) {
-                return $this->extractFieldValuesFromPostData($value);
+                if ($result = $this->extractFieldValuesFromPostData($value)) {
+                    return $result;
+                }
             }
         }
+    }
+
+    /**
+     * We're limiting fieldvalue conditions to inclusive only.  Conditions was created
+     * with single model conditioners in mind and having multiple fieldvalue conditioners
+     * makes checking for exclusive too complex.
+     *
+     * @param array $groups
+     * @return array
+     */
+    protected function filterConditionerGroupFields(array $fields): array
+    {
+        unset($fields['_nullable']);
+
+        $fields['_logic'] = [
+            'type' => 'hint',
+            'label' => 'Condition Logic',
+            'comment' => 'Field Value conditions are always inclusive and never nullable.  <a href="https://sixgweb.github.io/oc-plugin-documentation/conditions/usage/editor.html" target="_blank">See Documentation</a>',
+            'commentHtml' => true,
+        ];
+
+        return $fields;
     }
 }

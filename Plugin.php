@@ -7,12 +7,14 @@ use Event;
 use System\Classes\PluginBase;
 use Backend\Classes\BackendController;
 use Sixgweb\Attributize\Models\Field;
+use Sixgweb\Attributize\Components\Fields;
 use Sixgweb\Attributize\Models\FieldValue;
 use Sixgweb\Attributize\FormWidgets\Attributize;
+use Sixgweb\Attributize\FormWidgets\AttributizeFieldValue;
+use Sixgweb\Conditions\Models\Condition;
 use Sixgweb\Conditions\Classes\ConditionersManager;
 use Sixgweb\Attributize\Behaviors\FieldsController;
 use Sixgweb\Attributize\Behaviors\FieldsImportExportController;
-use Sixgweb\Attributize\Components\Fields;
 use Sixgweb\ConditionsAttributize\Classes\ConditionableEventHandler;
 use Sixgweb\ConditionsAttributize\Classes\FieldValueConditionerEventHandler;
 use Sixgweb\ConditionsAttributize\Classes\FieldValueConditionableEventHandler;
@@ -63,14 +65,13 @@ class Plugin extends PluginBase
         Event::subscribe(ConditionableEventHandler::class);
         Event::subscribe(FieldValueConditionableEventHandler::class);
         Event::subscribe(FieldValueConditionerEventHandler::class);
+        $this->removeFieldValueConditioner();
         $this->removeMeetsConditionsGlobalScope();
         $this->addConditionsToCreatedFields();
-        $this->addDependsOnToAttributizeFields();
-        $this->extendPreview();
         $this->extendFieldValueModel();
         $this->addSyncToolbarButton();
         $this->extendImportExport();
-        $this->extendFieldsComponent();
+        $this->addChangeHandlerToFieldValueFields();
     }
 
     protected function addConditionsToCreatedFields()
@@ -128,10 +129,6 @@ class Plugin extends PluginBase
                 $defaultConditions[] = $condition;
             }
 
-            /*if (!empty($defaultConditions)) {
-                Flash::info($field['label'] . ' Condition Automatically Added');
-            }*/
-
             Field::extend(function ($model) use ($defaultConditions) {
                 $model->conditions = $defaultConditions;
             });
@@ -159,35 +156,73 @@ class Plugin extends PluginBase
                 }
             }
 
-            if (empty($relations)) {
-                return;
+            if (!empty($relations)) {
+                foreach ($relations as $relation) {
+                    if ($field = $widget->getField($relation)) {
+                        $field->changeHandler($widget->alias . '::onRefresh');
+                    }
+                }
             }
 
-            $allFields->each(function ($field) use ($widget, $relations) {
-                $code = $field->type == 'fileupload'
-                    ? $widget->model->fieldableGetColumn() . '_' . $field->code
-                    : $widget->model->fieldableGetColumn() . '[' . $field->code . ']';
-                $formField = $widget->getField($code);
-                if (!$formField) {
-                    $formField = $widget->getField($field->code);
+            $conditionerIds = Condition::where('conditionable_type', Field::class)
+                ->whereIn('conditionable_id', $allFields->pluck('id')->toArray())
+                ->where('conditioner_type', FieldValue::class)
+                ->get()
+                ->pluck('conditioner_id')
+                ->toArray();
+
+            $allFields->each(function ($field) use ($widget, $conditionerIds) {
+                if ($field->fieldvalues->count()) {
+                    if (empty(array_intersect($field->fieldvalues->pluck('id')->toArray(), $conditionerIds))) {
+                        return;
+                    }
+
+                    $code = $field->type == 'fileupload'
+                        ? $widget->model->fieldableGetColumn() . '_' . $field->code
+                        : $widget->model->fieldableGetColumn() . '[' . $field->code . ']';
+                    $formField = $widget->getField($code) ?? $widget->getField($field->code);
+
+                    if ($formField) {
+                        $formField->changeHandler($widget->alias . '::onRefresh');
+                        $formField->containerAttributes(['data-attach-loading' => '']);
+                    }
                 }
-                if (!$formField) {
-                    return;
-                }
-                $depends = [];
-                if (isset($formField->config['dependsOn']) && $formField->config['dependsOn']) {
-                    $depends = is_array($formField->config['dependsOn'])
-                        ? $formField->config['dependsOn']
-                        : [$formField->config['dependsOn']];
-                }
-                $depends = array_merge($depends, $relations);
-                $formField->dependsOn($depends);
             });
         });
     }
 
     /**
+     * FieldValue conditioner is tricky because of it's ability to be used on fields and field values.
+     * Exporting, importing, list setup, etc. all need to exclude the FieldValue conditioner.  Otherwise,
+     * fields/field values that have a FieldValue conditioner will be hidden.
+     *
+     * @return void
+     */
+    protected function removeFieldValueConditioner()
+    {
+        Event::listen('backend.page.beforeDisplay', function ($controller, $action, $params) {
+            $actions = [
+                'index',
+                'fields',
+                'import',
+                'export',
+            ];
+
+            if (!in_array($action, $actions)) {
+                return;
+            }
+
+            ConditionersManager::instance()->excludeConditionerClass(FieldValue::class);
+        });
+
+        Attributize::extend(function () {
+            ConditionersManager::instance()->excludeConditionerClass(FieldValue::class);
+        });
+    }
+
+    /**
      * Remove the global meetsConditions scopes when the controller action is 'fields'.
+     * 
      * Conditions are added to the filter, allowing the user to still filter values,
      * without hiding fields that don't match.
      *
@@ -196,10 +231,16 @@ class Plugin extends PluginBase
     protected function removeMeetsConditionsGlobalScope()
     {
         Attributize::extend(function ($widget) {
+
             if (\Backend\Classes\BackendController::$action == 'fields') {
+
+
+                //Remove meetsConditions global scope so all fields are shown in the list
                 Event::listen('backend.list.extendQuery', function ($listWidget, $query) {
                     $query->withoutGlobalScope('meetsConditions');
                 });
+
+                //Remove meetsConditions global scope so field editor popup is populated with model data
                 Event::listen('sixgweb.attributize.getFieldModel', function ($query) {
                     $query->withoutGlobalScope('meetsConditions');
                 });
@@ -217,47 +258,6 @@ class Plugin extends PluginBase
                         });
                     });
                 });
-            } else {
-                $fieldValues = FieldValue::select('id')
-                    ->whereHas('field', function ($query) use ($widget) {
-                        $query->where('fieldable_type', $widget->getConfig('fieldableType'));
-                    })->get()->pluck('id')->toArray();
-                $conditionsManager = ConditionersManager::instance();
-                $conditionsManager->addConditioner([FieldValue::class => $fieldValues]);
-            }
-        });
-    }
-
-    /**
-     * Since the createPreview method is using FieldsHelper to generate the preview fields in attributize
-     * form widget, the filterWidget never calls the model.filter.filterScopes event, listened for in 
-     * AbstractConditionableEventHandler.  This workaround listens to the createPreview event 
-     * and performs the same function
-     *
-     * @return void
-     */
-    protected function extendPreview()
-    {
-        Event::listen('sixgweb.attributize.createPreview', function ($query, $filterWidget) {
-            /**
-             * Remove the meets conditions global scope when in the Fields action.  Otherwise,
-             * some fields that have conditions will not be visible in the interface (e.g. Forms->Entry Fields)
-             **/
-            if ($filterWidget->getController()->getAction() == 'fields') {
-                $query->withoutGlobalScope('meetsConditions');
-            }
-
-            $conditionersManager = ConditionersManager::instance();
-            foreach ($filterWidget->getScopes() as $scope) {
-                if ($scope->modelScope && $scope->modelScope == 'meetsConditions') {
-                    $name = $scope->scopeName;
-                    $class = str_replace('_', '\\', $name);
-                    if ($scope->value) {
-                        $conditionersManager->addConditioner([$class => $scope->value]);
-                    } else {
-                        $conditionersManager->removeConditioner($class);
-                    }
-                }
             }
         });
     }
@@ -270,27 +270,32 @@ class Plugin extends PluginBase
      */
     protected function extendFieldValueModel()
     {
-        Attributize::extend(function ($widget) {
-            FieldValue::extend(function ($model) use ($widget) {
-                //Don't add dynamic method when Attributize is in a repeater editor
-                if ($widget->isRepeater) {
-                    return;
-                }
-
-                $model->addDynamicMethod('scopeMatchFieldableType', function ($query) use ($widget) {
-                    if ($widget->getFieldModel()->exists) {
-                        $query->where('field_id', '!=', $widget->getFieldModel()->id);
+        Attributize::extend(function ($attributize) {
+            AttributizeFieldValue::extend(function ($attributizeFieldValue) use ($attributize) {
+                FieldValue::extend(function ($model) use ($attributize, $attributizeFieldValue) {
+                    //Don't add dynamic method when Attributize is in a repeater editor
+                    if ($attributize->isRepeater) {
+                        return;
                     }
-                    $query->where(function ($query) use ($widget) {
-                        $query->whereHas('field', function ($query) use ($widget) {
 
-                            $query->where('fieldable_type', $widget->fieldableType);
-                        });
+                    /**
+                     * Used in FieldValuesConditionerEventHandler to scope by fieldable type
+                     */
+                    $model->addDynamicMethod('scopeMatchFieldableType', function ($query) use ($model, $attributize, $attributizeFieldValue) {
+                        if ($attributizeFieldValue->getFieldValueModel()->exists) {
+                            $query->where('id', '!=', $attributizeFieldValue->getFieldValueModel()->id);
+                        }
 
-                        //Handles repeaters 1 level deep.  TODO: Loop posted nested_depth
-                        $query->orWhereHas('field', function ($query) use ($widget) {
-                            $query->whereHas('fieldable', function ($query) use ($widget) {
-                                $query->where('fieldable_type', $widget->fieldableType);
+                        $query->where(function ($query) use ($attributize) {
+                            $query->whereHas('field', function ($query) use ($attributize) {
+                                $query->where('fieldable_type', $attributize->fieldableType);
+                            });
+
+                            //Handles repeaters 1 level deep.  TODO: Loop posted nested_depth
+                            $query->orWhereHas('field', function ($query) use ($attributize) {
+                                $query->whereHas('fieldable', function ($query) use ($attributize) {
+                                    $query->where('fieldable_type', $attributize->fieldableType);
+                                });
                             });
                         });
                     });
@@ -371,27 +376,137 @@ class Plugin extends PluginBase
     }
 
     /**
-     * Extend fields component for frontend
-     *
+     * Adds onRefresh change handler to the form widget fields that have field values used as conditioner
+     * 
      * @return void
      */
-    protected function extendFieldsComponent(): void
+    protected function addChangeHandlerToFieldValueFields()
     {
-        /**
-         * Trigger form refresh when any fieldvalues are changed on the component form.  This allows
-         * conditions to be applied and the form to add/remove fields/field values that utilize these
-         * potential conditions.
-         */
+        //Frontend Fields component
         Fields::extend(function ($component) {
             Event::listen('sixgweb.attributize.fieldable.afterGetFields', function (&$fields) use ($component) {
-                foreach ($fields as $field) {
+                $conditionerIds = $this->getConditionerIds($fields);
+                if (empty($conditionerIds)) {
+                    return;
+                }
+
+                $fields->each(function ($field) use ($component, $conditionerIds) {
                     if ($field->fieldvalues->count()) {
+                        if (empty(array_intersect($field->fieldvalues->pluck('id')->toArray(), $conditionerIds))) {
+                            return;
+                        }
                         $config = $field->config;
                         $config['changeHandler'] = $component->alias . 'Form::onRefresh';
                         $field->config = $config;
                     }
+                });
+            });
+        });
+
+        //This event is only fired while in the backend
+        Event::listen('sixgweb.attributize.backend.form.extendAllFields', function ($widget, $allFields) {
+            $relations = [];
+            foreach ($widget->getFields() as $code => $field) {
+                if (isset($field->type) && $field->type == 'relation') {
+                    $relations[] = $code;
+                }
+            }
+
+            if (!empty($relations)) {
+                foreach ($relations as $relation) {
+                    if ($field = $widget->getField($relation)) {
+                        $field->changeHandler($widget->alias . '::onRefresh');
+                    }
+                }
+            }
+
+            $conditionerIds = $this->getConditionerIds($allFields);
+
+            if (empty($conditionerIds)) {
+                return;
+            }
+
+            /**
+             * By default, onRefresh will refresh the entire form.  This won't work with controllers
+             * that use the form with a sidebar (secondary tab).  This workaround forces the Form widget to refresh a single field.  The form.refresh listener below will then refresh the primary and outside sections.
+             */
+            $widget->bindEvent('form.refreshFields', function () use ($widget, $allFields) {
+
+                //Check if secondary tab has fields to determine if we need to refresh each section.
+                if (!$widget->getTab('secondary')->hasFields()) {
+                    return;
+                }
+
+                //No fields posted for update, so this is a full form refresh.
+                if (empty(post('fields', []))) {
+                    $key = $allFields->where('type', '!=', 'fileupload')->first()->code;
+                    $key = $widget->model->fieldableGetColumn() . '[' . $key . ']';
+                    request()->merge(['fields' => [$key]]);
+                }
+            });
+
+            $widget->bindEvent('form.refresh', function ($result) use ($widget) {
+                //Check if secondary tab has fields to determine if we need to refresh each section.
+                if (!$widget->getTab('secondary')->hasFields()) {
+                    return $result;
+                }
+
+                $sections = [
+                    'outside',
+                    'primary',
+                ];
+
+                foreach ($sections as $section) {
+                    $id = '#' . $widget->getId($section . 'Container');
+                    $result[$id] = $widget->render(['section' => $section, 'useContainer' => false]);
+                }
+
+                return $result;
+            });
+
+            $allFields->each(function ($field) use ($widget, $conditionerIds) {
+                if ($field->fieldvalues->count()) {
+                    if (empty(array_intersect($field->fieldvalues->pluck('id')->toArray(), $conditionerIds))) {
+                        return;
+                    }
+
+                    $code = $field->type == 'fileupload'
+                        ? $widget->model->fieldableGetColumn() . '_' . $field->code
+                        : $widget->model->fieldableGetColumn() . '[' . $field->code . ']';
+                    $formField = $widget->getField($code) ?? $widget->getField($field->code);
+
+                    if ($formField) {
+                        $formField->changeHandler($widget->alias . '::onRefresh');
+                        $formField->containerAttributes(['data-attach-loading' => '']);
+                    }
                 }
             });
         });
+    }
+
+    /**
+     * Get fieldvalue ids that are used as conditioners in the conditions table
+     *
+     * @param object $fields
+     * @return array
+     */
+    private function getConditionerIds(\October\Rain\Database\Collection $fields): array
+    {
+        $conditionerIds = [];
+        foreach ($fields as $field) {
+            if ($field->fieldvalues->count()) {
+                $conditionerIds = array_merge($conditionerIds, $field->fieldvalues->pluck('id')->toArray());
+            }
+        }
+
+        if (empty($conditionerIds)) {
+            return $conditionerIds;
+        }
+
+        return Condition::whereIn('conditioner_id', $conditionerIds)
+            ->where('conditioner_type', FieldValue::class)
+            ->get()
+            ->pluck('conditioner_id')
+            ->toArray();
     }
 }
