@@ -4,6 +4,7 @@ namespace Sixgweb\ConditionsAttributize;
 
 use App;
 use Event;
+use Model;
 use System\Classes\PluginBase;
 use Backend\Classes\BackendController;
 use Sixgweb\Attributize\Models\Field;
@@ -13,6 +14,7 @@ use Sixgweb\Attributize\FormWidgets\Attributize;
 use Sixgweb\Attributize\FormWidgets\AttributizeFieldValue;
 use Sixgweb\Conditions\Models\Condition;
 use Sixgweb\Conditions\Classes\ConditionersManager;
+use Sixgweb\Attributize\Behaviors\Fieldable;
 use Sixgweb\Attributize\Behaviors\FieldsController;
 use Sixgweb\Attributize\Behaviors\FieldsImportExportController;
 use Sixgweb\ConditionsAttributize\Classes\ConditionableEventHandler;
@@ -270,32 +272,46 @@ class Plugin extends PluginBase
      */
     protected function extendFieldValueModel()
     {
-        Attributize::extend(function ($attributize) {
-            AttributizeFieldValue::extend(function ($attributizeFieldValue) use ($attributize) {
-                FieldValue::extend(function ($model) use ($attributize, $attributizeFieldValue) {
-                    //Don't add dynamic method when Attributize is in a repeater editor
-                    if ($attributize->isRepeater) {
-                        return;
-                    }
+        Event::listen('backend.form.extendFields', function ($widget) {
+            $fieldableTypes = [];
+            $model = $widget->model;
 
-                    /**
-                     * Used in FieldValuesConditionerEventHandler to scope by fieldable type
-                     */
-                    $model->addDynamicMethod('scopeMatchFieldableType', function ($query) use ($model, $attributize, $attributizeFieldValue) {
-                        if ($attributizeFieldValue->getFieldValueModel()->exists) {
-                            $query->where('id', '!=', $attributizeFieldValue->getFieldValueModel()->id);
+            //If this is an attributize widget, use the fieldableType from the _fields field.
+            //Otherwise, use the model's relation definitions to get the fieldableType.
+            if ($widget->context == 'attributize') {
+                if ($field = $widget->getField('_fields')) {
+                    $fieldableTypes[] = $field->fieldableType;
+                }
+            } else {
+                $relations = $model->getRelationDefinitions();
+                if (empty($relations)) {
+                    return;
+                }
+
+                foreach ($relations as $key => $definition) {
+                    foreach ($definition as $name => $class) {
+                        if (isset($class[0])) {
+                            $fieldableTypes[] = $class[0];
                         }
+                    }
+                }
+            }
 
-                        $query->where(function ($query) use ($attributize) {
-                            $query->whereHas('field', function ($query) use ($attributize) {
-                                $query->where('fieldable_type', $attributize->fieldableType);
-                            });
+            FieldValue::extend(function ($model) use ($fieldableTypes) {
+                if ($model->methodExists('scopeMatchFieldableType')) {
+                    return;
+                }
 
-                            //Handles repeaters 1 level deep.  TODO: Loop posted nested_depth
-                            $query->orWhereHas('field', function ($query) use ($attributize) {
-                                $query->whereHas('fieldable', function ($query) use ($attributize) {
-                                    $query->where('fieldable_type', $attributize->fieldableType);
-                                });
+                $model->addDynamicMethod('scopeMatchFieldableType', function ($query) use ($model, $fieldableTypes) {
+                    $query->orWhere(function ($query) use ($fieldableTypes) {
+                        $query->whereHas('field', function ($query) use ($fieldableTypes) {
+                            $query->whereIn('fieldable_type', $fieldableTypes);
+                        });
+
+                        //Handles repeaters 1 level deep.  TODO: Loop posted nested_depth
+                        $query->orWhereHas('field', function ($query) use ($fieldableTypes) {
+                            $query->whereHas('fieldable', function ($query) use ($fieldableTypes) {
+                                $query->whereIn('fieldable_type', $fieldableTypes);
                             });
                         });
                     });

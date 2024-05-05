@@ -22,3 +22,5 @@
 1.1.1:
   - Refresh form when changing fieldvalue that is a conditioner
   - Force condition logic for fieldvalue conditioners
+1.1.2:
+  - Fix condition logic for fieldvalue conditioners
