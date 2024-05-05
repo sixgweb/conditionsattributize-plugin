@@ -21,8 +21,9 @@ class FieldValueConditionerEventHandler extends AbstractConditionerEventHandler
 
     protected function getControllerClass(): ?string
     {
-        //return \Sixgweb\Attributize\FormWidgets\Attributize::class;
-        return \Sixgweb\Attributize\Behaviors\Fieldable::class;
+        //Since some controllers are not fieldable (forms), we need to use the base controller
+        //to ensure the field values conditioner is available.
+        return \Backend\Classes\Controller::class;
     }
 
     protected function getFieldConfig(): array

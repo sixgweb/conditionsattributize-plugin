@@ -24,3 +24,5 @@
   - Force condition logic for fieldvalue conditioners
 1.1.2:
   - Fix condition logic for fieldvalue conditioners
+1.1.3:
+  - Change field value conditioner to use backend controller class
