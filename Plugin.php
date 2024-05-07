@@ -283,6 +283,10 @@ class Plugin extends PluginBase
                     $fieldableTypes[] = $field->fieldableType;
                 }
             } else {
+                if (!$model->methodExists('getRelationDefinitions')) {
+                    return;
+                }
+
                 $relations = $model->getRelationDefinitions();
                 if (empty($relations)) {
                     return;

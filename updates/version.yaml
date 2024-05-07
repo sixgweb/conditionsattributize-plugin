@@ -26,3 +26,5 @@
   - Fix condition logic for fieldvalue conditioners
 1.1.3:
   - Change field value conditioner to use backend controller class
+1.1.4:
+  - Fix bug calling getRelationDefinitions on halcyon model
