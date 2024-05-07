@@ -28,3 +28,5 @@
   - Change field value conditioner to use backend controller class
 1.1.4:
   - Fix bug calling getRelationDefinitions on halcyon model
+1.1.5:
+  - Fix bug to check if model has methodExists method
