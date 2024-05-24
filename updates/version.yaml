@@ -32,3 +32,5 @@
   - Fix bug to check if model has methodExists method
 1.1.6:
   - Remove attributize from composer.json. New method for fieldvalue exact conditions
+1.1.7:
+  - Add enableExactConditionerLogic method to conditions integration

@@ -145,6 +145,11 @@ class FieldValueConditionerEventHandler extends AbstractConditionerEventHandler
         return true;
     }
 
+    protected function enableExactConditionerLogic(): bool
+    {
+        return true;
+    }
+
     /**
      * We're limiting fieldvalue conditions to inclusive only.  Conditions was created
      * with single model conditioners in mind and having multiple fieldvalue conditioners
