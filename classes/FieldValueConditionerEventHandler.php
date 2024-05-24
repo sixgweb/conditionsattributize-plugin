@@ -140,6 +140,11 @@ class FieldValueConditionerEventHandler extends AbstractConditionerEventHandler
         }
     }
 
+    protected function enableExactLogic(): bool
+    {
+        return true;
+    }
+
     /**
      * We're limiting fieldvalue conditions to inclusive only.  Conditions was created
      * with single model conditioners in mind and having multiple fieldvalue conditioners
@@ -151,6 +156,11 @@ class FieldValueConditionerEventHandler extends AbstractConditionerEventHandler
     protected function filterConditionerGroupFields(array $fields): array
     {
         unset($fields['_nullable']);
+
+        $options = $fields['_logic']['options'];
+        unset($options['exclusive']);
+        $fields['_logic']['options'] = $options;
+        return $fields;
 
         $fields['_logic'] = [
             'type' => 'hint',
