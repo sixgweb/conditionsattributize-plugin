@@ -2,20 +2,15 @@
 
 namespace Sixgweb\ConditionsAttributize;
 
-use App;
 use Event;
-use Model;
 use System\Classes\PluginBase;
 use Backend\Classes\BackendController;
 use Sixgweb\Attributize\Models\Field;
 use Sixgweb\Attributize\Components\Fields;
 use Sixgweb\Attributize\Models\FieldValue;
 use Sixgweb\Attributize\FormWidgets\Attributize;
-use Sixgweb\Attributize\FormWidgets\AttributizeFieldValue;
 use Sixgweb\Conditions\Models\Condition;
 use Sixgweb\Conditions\Classes\ConditionersManager;
-use Sixgweb\Attributize\Behaviors\Fieldable;
-use Sixgweb\Attributize\Behaviors\FieldsController;
 use Sixgweb\Attributize\Behaviors\FieldsImportExportController;
 use Sixgweb\ConditionsAttributize\Classes\ConditionableEventHandler;
 use Sixgweb\ConditionsAttributize\Classes\FieldValueConditionerEventHandler;
@@ -27,6 +22,7 @@ use Sixgweb\ConditionsAttributize\Classes\FieldValueConditionableEventHandler;
 class Plugin extends PluginBase
 {
 
+    protected $fieldConditioners = [];
     protected $exportWidget;
 
     public $require = [
@@ -53,9 +49,7 @@ class Plugin extends PluginBase
      *
      * @return void
      */
-    public function register()
-    {
-    }
+    public function register() {}
 
     /**
      * Boot method, called right before the request route.
@@ -73,7 +67,8 @@ class Plugin extends PluginBase
         $this->extendFieldValueModel();
         $this->addSyncToolbarButton();
         $this->extendImportExport();
-        $this->addChangeHandlerToFieldValueFields();
+        $this->addChangeHandlerToFields();
+        //$this->checkForAttributizeConditionersConfig();
     }
 
     protected function addConditionsToCreatedFields()
@@ -96,9 +91,9 @@ class Plugin extends PluginBase
             }
 
             if (
-                !$controller->isClassExtendedWith(\Backend\Behaviors\FormController::class) ||
-                $controller->isClassExtendedWith(FieldsController::class) ||
-                $controller->methodExists('createFieldsFormWidget') ||
+                //!$controller->isClassExtendedWith(\Backend\Behaviors\FormController::class) ||
+                //$controller->isClassExtendedWith(FieldsController::class) ||
+                //$controller->methodExists('createFieldsFormWidget') ||
                 !$widget->model->conditionerFields ||
                 $widget->model instanceof Field ||
                 !$widget->model->exists ||
@@ -133,62 +128,6 @@ class Plugin extends PluginBase
 
             Field::extend(function ($model) use ($defaultConditions) {
                 $model->conditions = $defaultConditions;
-            });
-        });
-    }
-
-    /**
-     * Adds/updates dependsOn attribute for attributize fields
-     * If the form has relation fields defined,
-     * they are automatically added as dependencies, allowing
-     * other plugins to add the conditioner(s).
-     * 
-     * ConditionedFields are retrieved and any fields not matching
-     * conditioned fields are hidden, allowing dependsOn to still work.
-     *
-     * @return void
-     */
-    protected function addDependsOnToAttributizeFields(): void
-    {
-        Event::listen('sixgweb.attributize.backend.form.extendAllFields', function ($widget, $allFields) {
-            $relations = [];
-            foreach ($widget->getFields() as $code => $field) {
-                if (isset($field->type) && $field->type == 'relation') {
-                    $relations[] = $code;
-                }
-            }
-
-            if (!empty($relations)) {
-                foreach ($relations as $relation) {
-                    if ($field = $widget->getField($relation)) {
-                        $field->changeHandler($widget->alias . '::onRefresh');
-                    }
-                }
-            }
-
-            $conditionerIds = Condition::where('conditionable_type', Field::class)
-                ->whereIn('conditionable_id', $allFields->pluck('id')->toArray())
-                ->where('conditioner_type', FieldValue::class)
-                ->get()
-                ->pluck('conditioner_id')
-                ->toArray();
-
-            $allFields->each(function ($field) use ($widget, $conditionerIds) {
-                if ($field->fieldvalues->count()) {
-                    if (empty(array_intersect($field->fieldvalues->pluck('id')->toArray(), $conditionerIds))) {
-                        return;
-                    }
-
-                    $code = $field->type == 'fileupload'
-                        ? $widget->model->fieldableGetColumn() . '_' . $field->code
-                        : $widget->model->fieldableGetColumn() . '[' . $field->code . ']';
-                    $formField = $widget->getField($code) ?? $widget->getField($field->code);
-
-                    if ($formField) {
-                        $formField->changeHandler($widget->alias . '::onRefresh');
-                        $formField->containerAttributes(['data-attach-loading' => '']);
-                    }
-                }
             });
         });
     }
@@ -255,8 +194,7 @@ class Plugin extends PluginBase
                 Field::extend(function ($model) {
                     Event::listen('backend.list.beforeReorderStructure', function ($item) use ($model) {
                         $model->addGlobalScope('meetsConditions', function ($builder) {
-                            return function () {
-                            };
+                            return function () {};
                         });
                     });
                 });
@@ -403,7 +341,7 @@ class Plugin extends PluginBase
      * 
      * @return void
      */
-    protected function addChangeHandlerToFieldValueFields()
+    protected function addChangeHandlerToFields()
     {
         //Frontend Fields component
         Fields::extend(function ($component) {
@@ -428,16 +366,13 @@ class Plugin extends PluginBase
 
         //This event is only fired while in the backend
         Event::listen('sixgweb.attributize.backend.form.extendAllFields', function ($widget, $allFields) {
-            $relations = [];
-            foreach ($widget->getFields() as $code => $field) {
-                if (isset($field->type) && $field->type == 'relation') {
-                    $relations[] = $code;
-                }
-            }
 
-            if (!empty($relations)) {
-                foreach ($relations as $relation) {
-                    if ($field = $widget->getField($relation)) {
+            //Relations and recordfinders may add conditions to the form fields so we need to refresh the form when they change
+            $types = ['relation', 'recordfinder'];
+
+            foreach ($widget->getFields() as $code => $field) {
+                if (isset($field->type)) {
+                    if (in_array($field->type, $types)) {
                         $field->changeHandler($widget->alias . '::onRefresh');
                     }
                 }
@@ -531,5 +466,97 @@ class Plugin extends PluginBase
             ->get()
             ->pluck('conditioner_id')
             ->toArray();
+    }
+
+    /**
+     * Allow the developer to define a conditioners array in the attributize field
+     * config.  This will limit the conditioners available to the field, cleaning up
+     * the interface.
+     *
+     * @return void
+     */
+    protected function checkForAttributizeConditionersConfig()
+    {
+        //Extend the attributize formwidget to gain access to the conditioners config
+        Attributize::extend(function ($attributize) {
+
+            if (!isset($attributize->config->conditioners)) {
+                return;
+            }
+
+            $this->fieldConditioners[$attributize->alias] = $attributize->config->conditioners ?? [];
+
+            //Extend the form widget to remove conditioner groups not in the config
+            Event::listen('backend.form.extendFields', function ($form, $fields) {
+
+                if (!$form->model instanceof Field) {
+                    //return;
+                }
+
+                //if ($form->context == 'attributize') {
+
+                $alias = $this->getWidgetAliasForFieldConditioners($form);
+
+                if (!isset($this->fieldConditioners[$alias])) {
+                    return;
+                }
+
+                //Get the conditions field or return
+                if (!$conditionsField = $form->getField('conditions')) {
+                    return;
+                }
+
+                $form->getController()->vars['_conditioners'] = $this->fieldConditioners[$alias];
+
+                foreach ($conditionsField->config['groups'] as $key => $group) {
+                    if (!in_array($key, $this->fieldConditioners[$alias])) {
+                        unset($conditionsField->config['groups'][$key]);
+                    }
+                }
+
+                //Check for tab and add field back to the form widget, replacing the orig.
+                $tab = $conditionsField->tab ?? null;
+                if ($tab) {
+                    $form->addTabField('conditions', $conditionsField->config);
+                } else {
+                    $form->addField('conditions', $conditionsField->config);
+                }
+                //}
+            });
+
+            //Remove the conditioners not in the config from the Attributize filter widget
+            Event::listen('backend.filter.extendScopes', function ($filter) {
+                if (!$filter->model instanceof Field) {
+                    return;
+                }
+
+                $alias = $this->getWidgetAliasForFieldConditioners($filter);
+
+                $conditioners = $this->fieldConditioners[$alias] ?? [];
+
+                if (empty($conditioners)) {
+                    return;
+                }
+
+                foreach ($filter->getScopes() as $key => $scope) {
+                    if (strpos($key, '_') !== false && !in_array($key, $conditioners)) {
+                        $filter->removeScope($key);
+                    }
+                }
+            });
+        });
+    }
+
+    private function getWidgetAliasForFieldConditioners($widget)
+    {
+        $parts = explode('\\', get_class($widget));
+        $type = end($parts);
+        $alias = substr($widget->alias, 0, -strlen($type));
+
+        //Repeater fields will continue to add FormConfigFields to the alias as they are nested
+        //Strip this off to the get the original alias
+        $alias = str_replace(['FormConfigFields', 'FormValues'], '', $alias);
+
+        return $alias;
     }
 }

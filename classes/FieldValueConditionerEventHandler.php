@@ -103,7 +103,7 @@ class FieldValueConditionerEventHandler extends AbstractConditionerEventHandler
             }
 
             //Handle repeater values
-            if (is_array($value) && (isset($value[0]) && is_array($value[0]))) {
+            if (is_array($value) && (isset($value[key($value)]) && is_array($value[key($value)]))) {
                 $fieldModel = new Field;
                 foreach ($value as $repeaterValue) {
                     $this->addFieldValuesToModelQuery($fieldModel, $repeaterValue, $query);
@@ -119,7 +119,7 @@ class FieldValueConditionerEventHandler extends AbstractConditionerEventHandler
                         //This will slow the query down and we don't need it applied here.
                         $query->withoutGlobalScope('meetsConditions');
                         $query->where('code', $key);
-                        $query->where('fieldable_type', get_class($model));
+                        $query->whereFieldable($model);
                     });
                 });
             }
